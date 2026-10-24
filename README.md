@@ -1,191 +1,107 @@
-# Agentic MLOps Platform: Autonomous Kubernetes Self-Healing Gateway
+# agentic-mlops-platform
 
-An intelligent, agentic MLOps platform that monitors Kubernetes workloads, investigates failures in real time, and executes autonomous self-healing remediation actions using **Haystack AI** and **OpenAI GPT-4o**.
+A lightweight prototype exploring autonomous Kubernetes incident remediation using Haystack AI and GPT-4o.
 
----
+## The Idea
 
-## 📌 What is This Project?
+When a pod crashes in a cluster (for example, an ML job runs out of memory or a service panics on startup), the typical engineer response is:
+1. Receive an alert from Alertmanager, Datadog, or PagerDuty.
+2. Check `kubectl logs <pod>` to see what blew up.
+3. Apply a fix—often starting with restarting the pod, clearing a lock, or rolling back.
 
-In production MLOps and cloud environments, distributed workloads and inference services frequently encounter transient issues, memory exhaustion (`OOMKilled`), configuration drift, or dependency timeouts.
+This repo is a minimal proof-of-concept that automates that triage loop:
+- Exposes a webhook endpoint (`POST /webhook`) that receives failure alerts.
+- Uses the Kubernetes Python client to pull recent logs directly from the failing pod.
+- Hands the logs to an LLM via a Haystack 3 pipeline to diagnose the error and propose an action.
+- Executes the chosen action (e.g., deleting the crashing pod so the ReplicaSet spins up a fresh one).
 
-Traditionally, on-call engineers must manually inspect logs, diagnose root causes, and perform repetitive mitigation (e.g., restarting pods, scaling deployments, rollback).
+## Project Layout
 
-**Agentic MLOps Platform** bridges monitoring and operational response by acting as an **Autonomous Site Reliability Agent**:
-1. **Listens** for webhook alerts (from Alertmanager, Grafana, Datadog, or custom monitors).
-2. **Inspects** the live Kubernetes cluster to retrieve tail logs from failing pods.
-3. **Reasons** over the failure context using an LLM-powered Haystack AI pipeline.
-4. **Executes** targeted corrective actions (e.g., pod eviction/restart) directly on the cluster.
+- `main.py` - FastAPI entrypoint running the webhook receiver.
+- `pipeline/agent_pipeline.py` - Wires up the Haystack pipeline: log fetcher &rarr; prompt template &rarr; OpenAI chat &rarr; action executor.
+- `components/k8s_fetcher.py` - Haystack component that reads logs from the Kubernetes CoreV1 API.
+- `components/k8s_executor.py` - Haystack component that parses the model's JSON response and executes cluster operations.
+- `k8s/test_deployment.yaml` - A minimal deployment running a busybox container that prints a simulated `OOMKilled` error and exits with code 1 for testing.
 
----
+## Prerequisites
 
-## 🏗️ Architecture & Workflow
+1. **A Kubernetes cluster running locally**:
+   - If using **Docker Desktop**, go to **Settings &rarr; Kubernetes** and check **Enable Kubernetes**.
+   - Alternatively, use **Minikube** (`minikube start`) or **kind**.
+   - Verify it's ready: `kubectl get nodes`
+2. **Python 3.10+**
+3. **OpenAI API Key** with GPT-4o access.
 
-```mermaid
-flowchart TD
-    subgraph Monitoring ["1. Alert Ingestion"]
-        Alert["Alert Source\n(Prometheus / Webhook / CI)"] -->|"POST /webhook\n{pod_name, namespace}"| Gateway["FastAPI Webhook Gateway\n(main.py)"]
-    end
+## Quickstart
 
-    subgraph AgentPipeline ["2. Haystack Agentic Pipeline"]
-        Gateway -->|"Trigger"| Pipeline["Remediation Pipeline\n(pipeline/agent_pipeline.py)"]
-        Pipeline -->|"1. Fetch Pod Logs"| Fetcher["K8sLogFetcher\n(components/k8s_fetcher.py)"]
-        Fetcher -->|"Logs"| PromptBuilder["PromptBuilder\n(Reasoning Prompt)"]
-        PromptBuilder -->|"Prompt"| LLM["OpenAIChatGenerator\n(GPT-4o)"]
-        LLM -->|"Remediation JSON Plan"| Executor["K8sExecutor\n(components/k8s_executor.py)"]
-    end
-
-    subgraph Cluster ["3. Kubernetes Cluster"]
-        Fetcher -.->|"Read Namespaced Pod Log"| K8sApi["Kubernetes CoreV1 API"]
-        Executor -->|"Delete / Restart Pod"| K8sApi
-        K8sApi -->|"Recreate Pod"| CrashingPod["Failing Pod\n(crashing-ml-app)"]
-    end
-```
-
----
-
-## 📁 Repository Structure
-
-```text
-agentic-mlops-platform/
-├── components/
-│   ├── __init__.py
-│   ├── k8s_fetcher.py        # Haystack component: connects to K8s API to pull pod logs
-│   └── k8s_executor.py       # Haystack component: executes remediation actions (e.g., restart_pod)
-├── k8s/
-│   └── test_deployment.yaml  # Test deployment simulating an ML service crashing with OOM
-├── pipeline/
-│   ├── __init__.py
-│   └── agent_pipeline.py     # Haystack AI pipeline connecting Fetcher -> LLM -> Executor
-├── .gitignore                # Git ignore rules for venv, secrets, and cache
-├── main.py                   # FastAPI application hosting the /webhook alert gateway
-├── README.md                 # Project documentation
-└── requirements.txt          # Python dependencies
-```
-
----
-
-## ⚡ Tech Stack
-
-- **Framework**: [FastAPI](https://fastapi.tiangolo.com/) & [Uvicorn](https://www.uvicorn.org/)
-- **Agent Orchestration**: [Haystack AI 3.x](https://haystack.deepset.ai/) (`Pipeline`, `PromptBuilder`, `OpenAIChatGenerator`)
-- **LLM Reasoning**: OpenAI GPT-4o
-- **Cluster Management**: [Kubernetes Python Client](https://github.com/kubernetes-client/python) (`CoreV1Api`)
-- **Data Validation**: [Pydantic v2](https://docs.pydantic.dev/)
-
----
-
-## 🚀 Getting Started
-
-### 1. Prerequisites
-
-- **Python 3.10+**
-- **Kubernetes Cluster**:
-  - **Docker Desktop** (with *Enable Kubernetes* turned on under *Settings > Kubernetes*), or
-  - **Minikube** (`minikube start`), or
-  - Any cluster with a valid `~/.kube/config`.
-- **OpenAI API Key** with access to GPT-4o.
-
----
-
-### 2. Environment Setup
-
-Clone the repository and set up a virtual environment:
+### 1. Set up the virtual environment
 
 ```powershell
-# Windows (PowerShell)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# Install required dependencies
 pip install -r requirements.txt
 ```
 
----
+### 2. Start the webhook server
 
-### 3. Deploy the Test Crashing Workload
+Set your OpenAI API key and run `main.py`:
 
-Deploy the sample failing workload to your Kubernetes cluster:
+```powershell
+$env:OPENAI_API_KEY = "sk-..."
+python main.py
+```
+
+The server will start on `http://localhost:8000`.
+
+### 3. Deploy the crashing test app
+
+In a second terminal, deploy the test workload:
 
 ```powershell
 kubectl apply -f k8s/test_deployment.yaml
 ```
 
-Check the status of the crashing pod:
+Check the pod status:
 ```powershell
 kubectl get pods -l app=crashing-ml-app
 ```
-*(The pod will start, log `"FATAL ERROR: Out of memory (OOMKilled)"`, and exit with code 1).*
+You should see the pod crashing with `Error` or `CrashLoopBackOff`.
 
----
+### 4. Trigger the remediation webhook
 
-### 4. Run the Webhook Gateway
-
-Set your OpenAI API key and start the FastAPI gateway:
+Grab the name of the failing pod and simulate an alert trigger:
 
 ```powershell
-# Set API Key in PowerShell
-$env:OPENAI_API_KEY="sk-your-openai-key"
+$POD = (kubectl get pods -l app=crashing-ml-app -o jsonpath="{.items[0].metadata.name}")
 
-# Start server
-python main.py
-```
-The server will start listening at `http://0.0.0.0:8000`. Interactive OpenAPI documentation will be accessible at `http://localhost:8000/docs`.
-
----
-
-### 5. Trigger Autonomous Remediation
-
-In a separate terminal, fetch the running pod name and send an alert to the `/webhook` endpoint:
-
-```powershell
-# 1. Retrieve the pod name
-$POD_NAME = (kubectl get pods -l app=crashing-ml-app -o jsonpath="{.items[0].metadata.name}")
-
-# 2. Trigger the remediation webhook
 curl.exe -X POST "http://localhost:8000/webhook" `
   -H "Content-Type: application/json" `
-  -d "{`"pod_name`": `"$POD_NAME`", `"namespace`": `"default`"}"
+  -d "{`"pod_name`": `"$POD`", `"namespace`": `"default`"}"
 ```
 
-#### Example Webhook Response:
-```json
-{
-  "status": "Remediation Pipeline Executed",
-  "action_taken": {
-    "executor": {
-      "result": "Successfully deleted pod crashing-ml-app-6bbbc9cb4-x7z9q in default"
-    }
-  }
-}
-```
+### What happens behind the scenes
 
-The Kubernetes Deployment controller will immediately spin up a fresh pod replica, completing the autonomous self-healing cycle.
+1. FastAPI receives the alert payload (`pod_name`, `namespace`).
+2. `K8sLogFetcher` pulls the tail logs from the pod via `CoreV1Api.read_namespaced_pod_log()`:
+   ```text
+   Starting ML Inference...
+   FATAL ERROR: Out of memory (OOMKilled)
+   ```
+3. Haystack formats the prompt and sends it to GPT-4o, which responds with structured JSON:
+   ```json
+   {
+     "action": "restart_pod",
+     "target": "crashing-ml-app-...",
+     "namespace": "default",
+     "reason": "Process exited due to fatal out of memory error."
+   }
+   ```
+4. `K8sExecutor` parses the action and deletes the pod via `delete_namespaced_pod()`.
+5. The Kubernetes deployment controller notices the deleted pod and starts a replacement replica.
 
----
+## Notes & Future Ideas
 
-## 📡 API Reference
-
-### `POST /webhook`
-
-Receives an operational alert and initiates the Haystack auto-remediation pipeline.
-
-**Request Body:**
-```json
-{
-  "pod_name": "crashing-ml-app-6bbbc9cb4-x7z9q",
-  "namespace": "default",
-  "alert_name": "PodCrashAlert"
-}
-```
-
-**Responses:**
-- `200 OK`: Returns status and executor action output.
-- `400 / 500`: Returns error message if OpenAI API key or cluster is unreachable.
-
----
-
-## 🔮 Roadmap & Extensions
-
-- [ ] **Dynamic Resource Patching**: Allow the agent to automatically increase memory limits in the deployment spec on recurrent OOM errors.
-- [ ] **Slack / PagerDuty Notifications**: Add notification components to dispatch post-incident summaries.
-- [ ] **Vector Store Incident Memory**: Integrate a vector database (e.g. Qdrant / Chroma) to recall past incident resolutions and improve diagnosis accuracy.
+- **Production safety**: Currently, the agent immediately deletes pods when requested. In a real-world setup, you'd want guardrails, an allowed namespace whitelist, rate limiting, and human-in-the-loop approvals for non-trivial workloads.
+- **Smarter remediation**: Simply restarting an OOM pod usually just leads back into another crash. A natural progression is patching the Deployment's memory limits or switching to a lighter model checkpoint.
+- **Alertmanager integration**: Configure this endpoint directly as a webhook receiver in Prometheus Alertmanager to handle `KubePodCrashLooping` alerts automatically.
