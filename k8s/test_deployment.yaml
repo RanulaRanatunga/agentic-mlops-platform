@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crashing-ml-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crashing-ml-app
+  template:
+    metadata:
+      labels:
+        app: crashing-ml-app
+    spec:
+      containers:
+      - name: app
+        image: busybox
+        command: ['sh', '-c', 'echo "Starting ML Inference..."; sleep 2; echo "FATAL ERROR: Out of memory (OOMKilled)"; exit 1;']
