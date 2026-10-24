@@ -1,5 +1,4 @@
-# agentic-mlops-platform
-
+# Agentic MLOps Platform (Autonomous Kubernetes Self-Healing Gateway)
 A lightweight prototype exploring autonomous Kubernetes incident remediation using Haystack AI and GPT-4o.
 
 ## The Idea
@@ -98,10 +97,6 @@ curl.exe -X POST "http://localhost:8000/webhook" `
    }
    ```
 4. `K8sExecutor` parses the action and deletes the pod via `delete_namespaced_pod()`.
+
 5. The Kubernetes deployment controller notices the deleted pod and starts a replacement replica.
 
-## Notes & Future Ideas
-
-- **Production safety**: Currently, the agent immediately deletes pods when requested. In a real-world setup, you'd want guardrails, an allowed namespace whitelist, rate limiting, and human-in-the-loop approvals for non-trivial workloads.
-- **Smarter remediation**: Simply restarting an OOM pod usually just leads back into another crash. A natural progression is patching the Deployment's memory limits or switching to a lighter model checkpoint.
-- **Alertmanager integration**: Configure this endpoint directly as a webhook receiver in Prometheus Alertmanager to handle `KubePodCrashLooping` alerts automatically.
